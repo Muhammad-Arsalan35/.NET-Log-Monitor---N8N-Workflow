@@ -1,0 +1,379 @@
+{
+  "name": "DotNet Log Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "52363874-9c72-4658-b397-1e755dddab26",
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [
+        -880,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "filePath": "=C:/Logs/{{ $now.format('DDMMYYYY') }}_log.txt",
+        "dataPropertyName": "logContent"
+      },
+      "id": "7c6dfd9d-947a-4075-ac7d-df5329e47022",
+      "name": "Read Log File",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Parse log file and extract error lines\nconst logContent = items[0].binary.logContent.data.toString('utf8');\nconst lines = logContent.split('\\n');\n\n// Keywords to identify errors\nconst errorKeywords = ['error', 'exception', 'fail', 'critical', 'fatal'];\n\n// Patterns for different error types\nconst dbErrorPatterns = [\n  /ORA-\\d+/i,\n  /SQL.*error/i,\n  /table.*not.*found/i,\n  /column.*not.*found/i,\n  /invalid.*object.*name/i,\n  /syntax.*error.*near/i,\n  /timeout.*expired/i,\n  /connection.*failed/i,\n  /login.*failed/i\n];\n\nconst dotnetErrorPatterns = [\n  /NullReferenceException/i,\n  /InvalidOperationException/i,\n  /ArgumentException/i,\n  /IndexOutOfRangeException/i,\n  /FileNotFoundException/i,\n  /DirectoryNotFoundException/i,\n  /UnauthorizedAccessException/i,\n  /FormatException/i,\n  /OverflowException/i,\n  /TimeoutException/i\n];\n\nconst errorLines = [];\n\nlines.forEach((line, index) => {\n  const lowerLine = line.toLowerCase();\n  \n  // Check if line contains error keywords\n  const hasError = errorKeywords.some(keyword => lowerLine.includes(keyword));\n  \n  if (hasError && line.trim() !== '') {\n    let errorType = 'unknown';\n    let isDbError = false;\n    let isDotNetError = false;\n    \n    // Check for database errors\n    isDbError = dbErrorPatterns.some(pattern => pattern.test(line));\n    \n    // Check for .NET errors\n    isDotNetError = dotnetErrorPatterns.some(pattern => pattern.test(line));\n    \n    if (isDbError) {\n      errorType = 'database';\n    } else if (isDotNetError) {\n      errorType = 'dotnet';\n    } else {\n      errorType = 'general';\n    }\n    \n    // Extract stack trace (next few lines)\n    let stackTrace = '';\n    for (let i = index + 1; i < Math.min(index + 5, lines.length); i++) {\n      if (lines[i].trim().startsWith('at ') || lines[i].includes('Exception')) {\n        stackTrace += lines[i] + '\\n';\n      } else {\n        break;\n      }\n    }\n    \n    errorLines.push({\n      lineNumber: index + 1,\n      errorMessage: line.trim(),\n      stackTrace: stackTrace.trim(),\n      errorType: errorType,\n      timestamp: new Date().toISOString(),\n      isDbError: isDbError,\n      isDotNetError: isDotNetError,\n      logFileName: `{{ $now.format('DDMMYYYY') }}_log.txt`\n    });\n  }\n});\n\n// Return each error as separate item for processing\nreturn errorLines.map(error => ({ json: error }));"
+      },
+      "id": "bdab1dfc-1ba7-49bb-b212-e5d97f950c9c",
+      "name": "Parse Log & Extract Errors",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -440,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.errorType}}",
+              "value2": "database"
+            }
+          ]
+        }
+      },
+      "id": "667d57f7-3065-4d8f-909a-1fe56a404467",
+      "name": "Check Error Type",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        -220,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Extract table/column names from database error\nconst errorMessage = $json.errorMessage;\nlet tableName = '';\nlet columnName = '';\nlet queryToRun = '';\n\n// Extract table name patterns\nconst tableMatches = errorMessage.match(/table\\s+['\"]?([\\w\\d_]+)['\"]?/i) || \n                   errorMessage.match(/object\\s+['\"]?([\\w\\d_]+)['\"]?/i) ||\n                   errorMessage.match(/from\\s+([\\w\\d_]+)/i);\n\nif (tableMatches) {\n  tableName = tableMatches[1];\n}\n\n// Extract column name patterns\nconst columnMatches = errorMessage.match(/column\\s+['\"]?([\\w\\d_]+)['\"]?/i) ||\n                     errorMessage.match(/field\\s+['\"]?([\\w\\d_]+)['\"]?/i);\n\nif (columnMatches) {\n  columnName = columnMatches[1];\n}\n\n// Determine what to check based on error\nif (tableName && columnName) {\n  queryToRun = `SELECT COUNT(*) as exists_count FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '${tableName}' AND COLUMN_NAME = '${columnName}'`;\n} else if (tableName) {\n  queryToRun = `SELECT COUNT(*) as exists_count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = '${tableName}'`;\n} else {\n  queryToRun = 'SELECT 1 as exists_count'; // Default query\n}\n\nreturn {\n  json: {\n    ...($json),\n    tableName: tableName,\n    columnName: columnName,\n    queryToRun: queryToRun\n  }\n};"
+      },
+      "id": "2d98ba35-dec4-405f-b042-81d2900842ae",
+      "name": "Extract DB Objects",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{$json.queryToRun}}"
+      },
+      "id": "da7f0d79-3722-496a-ac67-1b7835110238",
+      "name": "Check Database Objects",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Process database check results\nconst existsCount = $json.exists_count || 0;\nlet dbSolution = '';\n\nif ($json.tableName && $json.columnName) {\n  if (existsCount > 0) {\n    dbSolution = `✅ Table '${$json.tableName}' and column '${$json.columnName}' exist in database.`;\n  } else {\n    dbSolution = `❌ Column '${$json.columnName}' does not exist in table '${$json.tableName}'. Consider adding the column or checking the spelling.`;\n  }\n} else if ($json.tableName) {\n  if (existsCount > 0) {\n    dbSolution = `✅ Table '${$json.tableName}' exists in database.`;\n  } else {\n    dbSolution = `❌ Table '${$json.tableName}' does not exist in database. Consider creating the table or checking the spelling.`;\n  }\n} else {\n  dbSolution = '⚠️ Could not extract specific table/column names from error message.';\n}\n\nreturn {\n  json: {\n    ...($json),\n    solution: dbSolution,\n    solutionType: 'database_check'\n  }\n};"
+      },
+      "id": "7a3d4c24-3274-415a-a822-277867997a28",
+      "name": "Process DB Results",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "requestMethod": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "jsonParameters": true,
+        "options": {
+          "bodyContentType": "json"
+        },
+        "bodyParametersJson": "{\n  \"model\": \"openai/gpt-3.5-turbo\",\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a helpful assistant for resolving .NET application errors. Provide concise, actionable solutions.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Analyze this error and provide a solution: {{$json.errorMessage}}\"\n    }\n  ],\n  \"max_tokens\": 500,\n  \"temperature\": 0.3\n}"
+      },
+      "id": "9773f17a-cf2b-4e9a-97da-50c0099cf454",
+      "name": "Get AI Solution",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Process OpenAI response\nconst response = $json;\nlet aiSolution = '';\n\ntry {\n  if (response.choices && response.choices.length > 0) {\n    aiSolution = response.choices[0].message.content;\n  } else {\n    aiSolution = 'Could not get AI analysis for this error.';\n  }\n} catch (error) {\n  aiSolution = 'Error processing AI response: ' + error.message;\n}\n\nreturn {\n  json: {\n    ...($previousNode.json),\n    solution: aiSolution,\n    solutionType: 'ai_analysis'\n  }\n};"
+      },
+      "id": "775220ab-a49f-4b1c-a3f8-a7c8f4398b25",
+      "name": "Process AI Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        220,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine"
+      },
+      "id": "eecf3f0a-a15a-4889-a58e-9a8f2ae57ad3",
+      "name": "Merge Solutions",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 1,
+      "position": [
+        660,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Prepare email content\nconst errors = items.map(item => item.json);\nlet emailBody = `<h2>🚨 .NET Application Error Report</h2>`;\nemailBody += `<p><strong>Report Generated:</strong> ${new Date().toLocaleString()}</p>`;\nemailBody += `<p><strong>Log File:</strong> ${errors[0]?.logFileName || 'N/A'}</p>`;\nemailBody += `<p><strong>Total Errors Found:</strong> ${errors.length}</p>`;\nemailBody += `<hr>`;\n\nerrors.forEach((error, index) => {\n  emailBody += `<h3>Error #${index + 1} - ${error.errorType.toUpperCase()}</h3>`;\n  emailBody += `<p><strong>Line:</strong> ${error.lineNumber}</p>`;\n  emailBody += `<p><strong>Message:</strong> <code>${error.errorMessage}</code></p>`;\n  \n  if (error.stackTrace) {\n    emailBody += `<p><strong>Stack Trace:</strong></p>`;\n    emailBody += `<pre style=\"background-color: #f5f5f5; padding: 10px; border-radius: 5px;\">${error.stackTrace}</pre>`;\n  }\n  \n  emailBody += `<p><strong>Solution:</strong></p>`;\n  emailBody += `<div style=\"background-color: #e8f5e8; padding: 10px; border-radius: 5px; margin: 10px 0;\">`;\n  emailBody += error.solution;\n  emailBody += `</div>`;\n  emailBody += `<hr>`;\n});\n\nemailBody += `<p><em>This is an automated report from the .NET Log Monitor</em></p>`;\n\nconst todayDate = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' }).replace(/\\//g, '');\n\nreturn {\n  json: {\n    emailSubject: `🚨 .NET Error Report - ${todayDate}_log.txt - ${errors.length} error(s) found`,\n    emailBody: emailBody,\n    errorCount: errors.length,\n    errors: errors,\n    logFileName: `${todayDate}_log.txt`\n  }\n};"
+      },
+      "id": "b04a051a-41fd-4f9f-989f-6144c0cada77",
+      "name": "Prepare Email Content",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        880,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "noreply@yourcompany.com",
+        "toEmail": "admin@yourcompany.com",
+        "subject": "={{$json.emailSubject}}",
+        "emailFormat": "html",
+        "message": "={{$json.emailBody}}",
+        "options": {}
+      },
+      "id": "9a79f01d-d1cd-4ac7-98ee-e5aaa604687e",
+      "name": "Send Email Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "ErrorSolutions",
+        "columns": "error_message, stack_trace, error_type, solution, solution_type, timestamp, line_number, log_file_name",
+        "additionalFields": {}
+      },
+      "id": "3509da89-8647-46d1-b2fd-97b449841bfe",
+      "name": "Save to ErrorSolutions DB",
+      "type": "n8n-nodes-base.microsoftSql",
+      "typeVersion": 1,
+      "position": [
+        880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json.errorCount}}",
+              "operation": "largerEqual",
+              "value2": 1
+            }
+          ]
+        }
+      },
+      "id": "318d6c8c-ce35-41c9-a7da-81832080f41c",
+      "name": "Check If Errors Found",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        660,
+        300
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "Read Log File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Log File": {
+      "main": [
+        [
+          {
+            "node": "Parse Log & Extract Errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Log & Extract Errors": {
+      "main": [
+        [
+          {
+            "node": "Check Error Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Error Type": {
+      "main": [
+        [
+          {
+            "node": "Extract DB Objects",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get AI Solution",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract DB Objects": {
+      "main": [
+        [
+          {
+            "node": "Check Database Objects",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Database Objects": {
+      "main": [
+        [
+          {
+            "node": "Process DB Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process DB Results": {
+      "main": [
+        [
+          {
+            "node": "Merge Solutions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get AI Solution": {
+      "main": [
+        [
+          {
+            "node": "Process AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process AI Response": {
+      "main": [
+        [
+          {
+            "node": "Merge Solutions",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Solutions": {
+      "main": [
+        [
+          {
+            "node": "Prepare Email Content",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check If Errors Found",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Email Content": {
+      "main": [
+        [
+          {
+            "node": "Send Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check If Errors Found": {
+      "main": [
+        [
+          {
+            "node": "Save to ErrorSolutions DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": ["dotnet", "log-monitoring", "error-detection", "automation"]
+}
