@@ -1,0 +1,294 @@
+.NET Log Monitor - N8N Workflow
+🚨 Automated .NET Application Error Detection & Analysis System
+Overview
+This n8n workflow automatically monitors .NET application log files, detects errors, provides AI-powered solutions, and sends detailed email reports to administrators.
+Features
+🔍 Error Detection
+
+Monitors daily log files automatically
+Detects multiple error types: Database, .NET Framework, General
+Extracts stack traces and error context
+Identifies specific error patterns
+
+🤖 AI-Powered Solutions
+
+Integrates with OpenRouter AI for intelligent error analysis
+Provides actionable solutions for detected errors
+Categorizes errors by type and severity
+
+📧 Email Notifications
+
+Sends formatted HTML email reports
+Includes error details, stack traces, and solutions
+Only sends emails when errors are found
+
+💾 Database Logging
+
+Stores all errors and solutions in database
+Maintains historical error tracking
+Enables trend analysis and reporting
+
+Prerequisites
+Required Software
+
+n8n (Self-hosted or Cloud)
+Microsoft SQL Server (for database operations)
+SMTP Server (for email notifications)
+
+Required Credentials
+
+Microsoft SQL Server Connection
+OpenRouter AI API Key (for AI analysis)
+SMTP Email Configuration
+
+Installation
+1. Import Workflow
+
+Download dotnet-log-monitor.json
+Open n8n
+Go to Workflows → Import from file
+Select the downloaded JSON file
+
+2. Database Setup
+Create the ErrorSolutions table in your SQL Server:
+sqlCREATE TABLE ErrorSolutions (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    error_message NVARCHAR(MAX),
+    stack_trace NVARCHAR(MAX),
+    error_type VARCHAR(50),
+    solution NVARCHAR(MAX),
+    solution_type VARCHAR(50),
+    timestamp DATETIME2,
+    line_number INT,
+    log_file_name VARCHAR(255),
+    created_date DATETIME2 DEFAULT GETDATE()
+);
+3. Configure Credentials
+Microsoft SQL Server
+
+Go to Credentials → Create New
+Select Microsoft SQL Server
+Fill in your database connection details:
+
+Host: your-sql-server
+Database: your-database
+Username: your-username
+Password: your-password
+
+
+
+OpenRouter AI API
+
+Go to Credentials → Create New
+Select HTTP Header Auth
+Set:
+
+Name: Authorization
+Value: Bearer YOUR_API_KEY
+
+
+
+Email (SMTP)
+
+Go to Credentials → Create New
+Select SMTP
+Configure your SMTP settings
+
+4. Customize Configuration
+Update File Paths
+Edit the "Read Log File" node:
+javascript// Change this path to match your log file location
+filePath: "C:/Logs/{{ $now.format('DDMMYYYY') }}_log.txt"
+Update Email Settings
+Edit the "Send Email Alert" node:
+javascriptfromEmail: "noreply@yourcompany.com"  // Your sender email
+toEmail: "admin@yourcompany.com"      // Recipient email
+Schedule Configuration
+Edit the "Cron Trigger" node:
+
+Current: Every hour
+Modify as needed (daily, every 30 minutes, etc.)
+
+Workflow Logic
+mermaidgraph TD
+    A[Cron Trigger] --> B[Read Log File]
+    B --> C[Parse Log & Extract Errors]
+    C --> D[Check Error Type]
+    D --> E[Database Errors]
+    D --> F[Other Errors]
+    E --> G[Extract DB Objects]
+    G --> H[Check Database Objects]
+    H --> I[Process DB Results]
+    F --> J[Get AI Solution]
+    J --> K[Process AI Response]
+    I --> L[Merge Solutions]
+    K --> L
+    L --> M[Prepare Email Content]
+    L --> N[Check If Errors Found]
+    M --> O[Send Email Alert]
+    N --> P[Save to ErrorSolutions DB]
+Supported Error Types
+Database Errors
+
+ORA-XXXXX (Oracle errors)
+SQL syntax errors
+Table/column not found
+Connection failures
+Login failures
+Timeout errors
+
+.NET Framework Errors
+
+NullReferenceException
+InvalidOperationException
+ArgumentException
+IndexOutOfRangeException
+FileNotFoundException
+UnauthorizedAccessException
+FormatException
+TimeoutException
+
+General Errors
+
+Any line containing: error, exception, fail, critical, fatal
+
+Email Report Format
+The email report includes:
+
+📊 Summary: Total errors found, log file name, timestamp
+🔍 Error Details: Line number, error message, stack trace
+💡 Solutions: AI-powered analysis and recommendations
+📈 Formatting: Clean HTML with color coding
+
+Docker Deployment
+Docker Compose Example
+yamlversion: '3.8'
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=password
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./logs:/logs  # Mount your log directory
+    depends_on:
+      - sqlserver
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    container_name: sqlserver
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=YourStrong@Passw0rd
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+
+volumes:
+  n8n_data:
+  sqlserver_data:
+Run with Docker
+bash# Clone repository
+git clone https://github.com/yourusername/dotnet-log-monitor.git
+cd dotnet-log-monitor
+
+# Start containers
+docker-compose up -d
+
+# Access n8n
+open http://localhost:5678
+Troubleshooting
+Common Issues
+
+Log file not found
+
+Check file path in "Read Log File" node
+Ensure n8n has read permissions
+
+
+Database connection failed
+
+Verify SQL Server credentials
+Check network connectivity
+Ensure database exists
+
+
+AI analysis not working
+
+Verify OpenRouter API key
+Check API rate limits
+Ensure proper authentication
+
+
+Email not sending
+
+Check SMTP credentials
+Verify email addresses
+Check spam folder
+
+
+
+Debug Tips
+
+Enable workflow execution logging
+Test each node individually
+Check n8n logs for errors
+Verify all credentials are properly configured
+
+Customization
+Adding New Error Patterns
+Edit the "Parse Log & Extract Errors" node:
+javascript// Add new patterns to existing arrays
+const customErrorPatterns = [
+  /YourCustomError/i,
+  /AnotherPattern/i
+];
+Modify Email Template
+Edit the "Prepare Email Content" node to customize:
+
+Email styling
+Content format
+Additional information
+
+Change Schedule
+Modify the "Cron Trigger" node:
+
+Every 30 minutes: */30 * * * *
+Daily at 9 AM: 0 9 * * *
+Every 6 hours: 0 */6 * * *
+
+Contributing
+
+Fork the repository
+Create a feature branch
+Make your changes
+Test thoroughly
+Submit a pull request
+
+License
+This project is licensed under the MIT License - see the LICENSE file for details.
+Support
+For issues and questions:
+
+Create a GitHub issue
+Check the n8n community forum
+Review the troubleshooting section
+
+Changelog
+Version 1.0.0
+
+Initial release
+Basic error detection
+AI-powered analysis
+Email notifications
+Database logging

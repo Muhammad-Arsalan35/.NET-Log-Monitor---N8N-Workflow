@@ -1,0 +1,37 @@
+
+-- ================================
+-- .NET Log Monitor Database Setup
+-- ================================
+
+-- Create ErrorSolutions table for storing error analysis
+CREATE TABLE ErrorSolutions (
+    id INT IDENTITY(1,1) PRIMARY KEY,
+    error_message NVARCHAR(MAX) NOT NULL,
+    stack_trace NVARCHAR(MAX),
+    error_type VARCHAR(50) NOT NULL,
+    solution NVARCHAR(MAX),
+    solution_type VARCHAR(50),
+    timestamp DATETIME2 NOT NULL,
+    line_number INT,
+    log_file_name VARCHAR(255),
+    created_date DATETIME2 DEFAULT GETDATE()
+);
+
+-- Create indexes for better performance
+CREATE INDEX IX_ErrorSolutions_ErrorType ON ErrorSolutions(error_type);
+CREATE INDEX IX_ErrorSolutions_CreatedDate ON ErrorSolutions(created_date);
+CREATE INDEX IX_ErrorSolutions_LogFileName ON ErrorSolutions(log_file_name);
+
+-- Create a view for error statistics
+CREATE VIEW ErrorStatistics AS
+SELECT 
+    error_type,
+    COUNT(*) as total_errors,
+    COUNT(DISTINCT log_file_name) as affected_log_files,
+    MIN(created_date) as first_occurrence,
+    MAX(created_date) as last_occurrence
+FROM ErrorSolutions
+GROUP BY error_type;
+
+-- Create a view for daily error summary
+CREATE VIEW DailyErrorSummary AS
